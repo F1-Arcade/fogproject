@@ -78,6 +78,7 @@ services:
       FOG_MASTER_HOST: fog-master
       FOG_MAX_CLIENTS: ${FOG_MAX_CLIENTS:-10}
       FOG_BANDWIDTH_LIMIT: ${FOG_BANDWIDTH_LIMIT:-0}
+      FOG_GRAPH_ENABLED: ${FOG_GRAPH_ENABLED:-1}
       FOG_STORAGE_DIR: ${FOG_STORAGE_DIR:-/images}
       FOG_SNAPIN_DIR: ${FOG_SNAPIN_DIR:-/opt/fog/snapins}
       # DB read-only access for FOG PHP services (status, bandwidth checks)

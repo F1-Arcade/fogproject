@@ -40,17 +40,19 @@ if (count($Nodes) === 0) {
 
 // Allowed updatable fields and their POST key → model property mapping.
 $fields = array(
-    'name'       => 'name',
-    'path'       => 'path',
-    'ftppath'    => 'ftppath',
-    'snapinpath' => 'snapinpath',
-    'sslpath'    => 'sslpath',
-    'maxClients' => 'maxClients',
-    'user'       => 'user',
-    'pass'       => 'pass',
-    'interface'  => 'interface',
-    'bandwidth'  => 'bandwidth',
-    'webroot'    => 'webroot',
+    'name'           => 'name',
+    'path'           => 'path',
+    'ftppath'        => 'ftppath',
+    'snapinpath'     => 'snapinpath',
+    'sslpath'        => 'sslpath',
+    'maxClients'     => 'maxClients',
+    'user'           => 'user',
+    'pass'           => 'pass',
+    'interface'      => 'interface',
+    'bandwidth'      => 'bandwidth',
+    'webroot'        => 'webroot',
+    'isGraphEnabled' => 'isGraphEnabled',
+    'isEnabled'      => 'isEnabled',
 );
 
 foreach ($Nodes as &$Node) {

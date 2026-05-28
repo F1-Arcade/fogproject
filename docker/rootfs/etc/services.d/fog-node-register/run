@@ -30,11 +30,12 @@ SNAPIN_DIR="${FOG_SNAPIN_DIR:-/opt/fog/snapins}"
 SSL_PATH="${FOG_SNAPIN_DIR:-/opt/fog/snapins}/ssl"
 MAX_CLIENTS="${FOG_MAX_CLIENTS:-10}"
 BANDWIDTH="${FOG_BANDWIDTH_LIMIT:-0}"
+GRAPH_ENABLED="${FOG_GRAPH_ENABLED:-1}"
 
 # Build a fingerprint of all registration-relevant config.
-CONFIG_HASH=$(printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+CONFIG_HASH=$(printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
     "$NODE_NAME" "$NODE_IP" "$NODE_USER" "$NODE_PASS" "$NODE_IFACE" \
-    "$STORAGE_DIR" "$SNAPIN_DIR" "$SSL_PATH" "$MAX_CLIENTS" "$BANDWIDTH" "$WEBROOT" \
+    "$STORAGE_DIR" "$SNAPIN_DIR" "$SSL_PATH" "$MAX_CLIENTS" "$BANDWIDTH" "$GRAPH_ENABLED" "$WEBROOT" \
     | md5sum | awk '{print $1}')
 
 # If config hasn't changed since last registration, nothing to do.
@@ -71,6 +72,7 @@ if [ "$EXISTS" = "exists" ]; then
         -d "interface=$(b64 "${NODE_IFACE}")" \
         -d "bandwidth=$(b64 "${BANDWIDTH}")" \
         -d "webroot=$(b64 "${WEBROOT}")" \
+        -d "isGraphEnabled=$(b64 "${GRAPH_ENABLED}")" \
         -d "fogverified" \
         "${BASE_URL}maintenance/update_node.php" 2>/dev/null || true)
     if [ "$RESULT" = "updated" ]; then
@@ -105,6 +107,13 @@ VERIFY=$(curl -sk -X POST --data-urlencode "ip=${NODE_IP}" \
     "${BASE_URL}maintenance/check_node_exists.php" 2>/dev/null || true)
 
 if [ "$VERIFY" = "exists" ]; then
+    # create_update_node.php doesn't set isGraphEnabled; call update_node.php
+    # to apply any fields the upstream create endpoint ignores.
+    curl -sk -X POST \
+        -d "ip=$(b64 "${NODE_IP}")" \
+        -d "isGraphEnabled=$(b64 "${GRAPH_ENABLED}")" \
+        -d "fogverified" \
+        "${BASE_URL}maintenance/update_node.php" >/dev/null 2>&1 || true
     echo -n "$CONFIG_HASH" > "$MARKER"
     echo "[fog-node-register] Storage node '${NODE_NAME}' (${NODE_IP}) registered via master HTTP API"
 else
