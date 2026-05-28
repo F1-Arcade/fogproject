@@ -1,0 +1,38 @@
+#!/bin/bash
+# Idempotent FOG database schema installer.
+# Runs once after Apache is up; subsequent invocations exit quickly.
+
+MARKER=/var/lib/fog/.schema-installed
+
+# Storage nodes have no schema responsibility.
+if [ "${FOG_STORAGE_NODE}" = "1" ]; then
+    exec sleep infinity
+fi
+
+mkdir -p "$(dirname "$MARKER")"
+
+if [ -f "$MARKER" ]; then
+    exec sleep infinity
+fi
+
+# Wait for Apache to start serving the schema page.
+for i in $(seq 1 60); do
+    if curl -fsS -o /dev/null "http://localhost/fog/management/index.php?node=schema" 2>/dev/null; then
+        break
+    fi
+    sleep 2
+done
+
+# Submit the schema install confirmation.
+RESPONSE=$(curl -fsS -X POST \
+    "http://localhost/fog/management/index.php?node=schema" \
+    -d "fogverified=&confirm=1" 2>/dev/null || true)
+
+if echo "$RESPONSE" | grep -q "Install / Update Successful"; then
+    touch "$MARKER"
+    echo "[fog-schema-init] Schema installed successfully"
+else
+    echo "[fog-schema-init] Schema install did not return success — will retry on next container start"
+fi
+
+exec sleep infinity

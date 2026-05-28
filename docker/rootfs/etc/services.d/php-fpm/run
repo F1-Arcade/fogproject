@@ -1,0 +1,3 @@
+#!/bin/bash
+PHP_VER=$(cat /etc/.php_ver)
+exec /usr/sbin/php-fpm${PHP_VER} --nodaemonize --fpm-config /etc/php/${PHP_VER}/fpm/php-fpm.conf

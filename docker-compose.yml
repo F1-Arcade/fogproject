@@ -1,0 +1,114 @@
+services:
+  fog-db:
+    image: mariadb:10.11
+    container_name: fog-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${FOG_DB_ROOT_PASS:-fogroot}
+      MYSQL_DATABASE: ${FOG_DB_NAME:-fog}
+      MYSQL_USER: ${FOG_DB_USER:-fogstorage}
+      MYSQL_PASSWORD: ${FOG_DB_PASS:-fogstorage}
+    volumes:
+      - fog-db-data:/var/lib/mysql
+    networks:
+      - fog-net
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  fog-master:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fog-master
+    restart: unless-stopped
+    depends_on:
+      fog-db:
+        condition: service_healthy
+    environment:
+      FOG_IP: ${FOG_IP:-172.20.0.10}
+      FOG_DB_HOST: fog-db
+      FOG_DB_NAME: ${FOG_DB_NAME:-fog}
+      FOG_DB_USER: ${FOG_DB_USER:-fogstorage}
+      FOG_DB_PASS: ${FOG_DB_PASS:-fogstorage}
+      FOG_DB_ROOT_PASS: ${FOG_DB_ROOT_PASS:-fogroot}
+      FOG_STORAGE_NODE: "0"
+      FOG_INTERFACE: eth0
+      FOG_USER: fogproject
+      FOG_USER_PASS: ${FOG_USER_PASS:-fogproject}
+      FOG_HOSTNAME: fog-master
+    volumes:
+      - fog-images:/images
+      - fog-snapins:/opt/fog/snapins
+    networks:
+      fog-net:
+        ipv4_address: 172.20.0.10
+    ports:
+      - "8081:80" # HTTP (web UI)
+      - "4443:443" # HTTPS
+      - "69:69/udp" # TFTP
+      - "21:21" # FTP
+      - "2049:2049" # NFS
+      - "20048:20048" # NFS mountd
+    cap_add:
+      - SYS_ADMIN # Required for NFS kernel server
+    # For kernel NFS in Docker, the container needs these
+    # In production (k3s), use hostNetwork: true instead
+    privileged: false
+
+  fog-storage-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fog-storage-node
+    restart: unless-stopped
+    depends_on:
+      fog-master:
+        condition: service_healthy
+    environment:
+      FOG_IP: ${FOG_STORAGE_IP:-172.20.0.11}
+      FOG_STORAGE_NODE: "1"
+      FOG_INTERFACE: ${FOG_INTERFACE:-eth0}
+      FOG_USER: ${FOG_USER:-fogproject}
+      FOG_USER_PASS: ${FOG_USER_PASS:-fogproject}
+      FOG_HOSTNAME: fog-storage-node
+      FOG_NODE_NAME: ${FOG_VENUE:-site}-storage-node
+      FOG_MASTER_HOST: fog-master
+      FOG_MAX_CLIENTS: ${FOG_MAX_CLIENTS:-10}
+      FOG_BANDWIDTH_LIMIT: ${FOG_BANDWIDTH_LIMIT:-0}
+      FOG_STORAGE_DIR: ${FOG_STORAGE_DIR:-/images}
+      FOG_SNAPIN_DIR: ${FOG_SNAPIN_DIR:-/opt/fog/snapins}
+      # DB read-only access for FOG PHP services (status, bandwidth checks)
+      FOG_DB_HOST: fog-db
+      FOG_DB_NAME: ${FOG_DB_NAME:-fog}
+      FOG_DB_USER: ${FOG_DB_USER:-fogstorage}
+      FOG_DB_PASS: ${FOG_DB_PASS:-fogstorage}
+    volumes:
+      - fog-images-node:/images
+      - fog-snapins-node:/opt/fog/snapins
+    networks:
+      fog-net:
+        ipv4_address: 172.20.0.11
+    ports:
+      - "8080:80" # HTTP (for bandwidth checks)
+      - "2121:21" # FTP (mapped to avoid conflict)
+      - "12049:2049" # NFS
+      - "30048:20048" # NFS mountd
+    cap_add:
+      - SYS_ADMIN
+
+volumes:
+  fog-db-data:
+  fog-images:
+  fog-snapins:
+  fog-images-node:
+  fog-snapins-node:
+
+networks:
+  fog-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24

@@ -1,0 +1,6 @@
+#!/bin/bash
+# Wait for rpcbind and mountd
+while ! rpcinfo -p localhost >/dev/null 2>&1; do sleep 0.5; done
+while ! rpcinfo -p localhost | grep -q mountd; do sleep 0.5; done
+# Filter kernel "Unsupported version" noise from nfsd startup
+exec /usr/sbin/rpc.nfsd --no-nfs-version 2 --foreground 8 2> >(grep -v "Unsupported version" >&2)

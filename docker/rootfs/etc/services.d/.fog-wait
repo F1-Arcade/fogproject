@@ -1,0 +1,34 @@
+#!/bin/bash
+# Wait for FOG service config and database schema to be ready.
+# Sourced by every FOG PHP service before exec.
+
+CONFIG="/opt/fog/service/etc/config.php"
+
+# Wait up to ~2 min for the init script to write the config.
+for _ in $(seq 1 60); do
+    [ -f "$CONFIG" ] && break
+    sleep 2
+done
+
+# Wait up to ~10 min for the schema to be installed.
+# Master checks DB directly; storage nodes poll the master HTTP API.
+if [ "${FOG_STORAGE_NODE}" = "1" ]; then
+    MASTER_HOST="${FOG_MASTER_HOST:-fog-master}"
+    WEBROOT="/${FOG_WEBROOT:-fog/}"
+    for _ in $(seq 1 120); do
+        if curl -fsSk -o /dev/null "http://${MASTER_HOST}${WEBROOT}management/index.php" 2>/dev/null; then
+            HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' "http://${MASTER_HOST}${WEBROOT}management/index.php" 2>/dev/null)
+            # 200 = login page (schema installed); 302 to ?node=schema = not yet
+            [ "$HTTP_CODE" = "200" ] && break
+        fi
+        sleep 5
+    done
+else
+    for _ in $(seq 1 120); do
+        if mariadb -h "${FOG_DB_HOST}" -u "${FOG_DB_USER}" -p"${FOG_DB_PASS}" "${FOG_DB_NAME}" \
+            -e "SELECT 1 FROM nfsGroupMembers LIMIT 1" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5
+    done
+fi
