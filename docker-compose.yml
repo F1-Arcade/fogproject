@@ -39,6 +39,7 @@ services:
       FOG_USER: fogproject
       FOG_USER_PASS: ${FOG_USER_PASS:-fogproject}
       FOG_HOSTNAME: fog-master
+      FOG_PLUGINS: ${FOG_PLUGINS:-subnetgroup,location}
     volumes:
       - fog-images:/images
       - fog-snapins:/opt/fog/snapins
