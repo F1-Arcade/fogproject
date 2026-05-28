@@ -185,6 +185,10 @@ pm.start_servers = 5
 pm.min_spare_servers = 5
 pm.max_spare_servers = 35
 pm.max_requests = 500
+php_admin_flag[display_errors] = Off
+php_admin_value[error_reporting] = E_ALL & ~E_NOTICE & ~E_WARNING & ~E_DEPRECATED
+php_admin_flag[log_errors] = On
+php_admin_value[error_log] = /var/log/php-fpm-fog.log
 EOF
 rm -f /etc/php/${PHP_VER}/fpm/pool.d/www.conf
 
@@ -256,6 +260,17 @@ fi
 
 # ─── Create run directories ─────────────────────────────────────────────────
 mkdir -p /run/php /run/rpcbind /run/sendsigs.omit.d /var/lib/nfs/rpc_pipefs
+
+# ─── Create FOG log files with correct ownership ────────────────────────────
+touch /var/www/html/fog/fog_login_accepted.log
+chown www-data:www-data /var/www/html/fog/fog_login_accepted.log
+
+# ─── Suppress upstream PHP warnings in CLI services ─────────────────────────
+cat > /etc/php/${PHP_VER}/cli/conf.d/99-fog-quiet.ini <<'PHPINI'
+display_errors = Off
+log_errors = On
+error_log = /var/log/fog-services.log
+PHPINI
 
 # ─── Database schema initialisation (master only) ────────────────────────────
 if [ "${FOG_STORAGE_NODE}" = "0" ] && [ -n "${FOG_DB_ROOT_PASS}" ]; then
