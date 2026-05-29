@@ -62,6 +62,14 @@ packages/web/management/languages/*
 # Config file #
 ###############
 *config.class.php
+# Venue plugin domain model — name collides with the *config.class.php ignore
+# rule above (it is a per-venue settings row, not an environment config file).
+!packages/web/lib/plugins/venue/class/venueconfig.class.php
+!packages/web/lib/plugins/venue/class/venueconfigcrypto.class.php
+!packages/web/lib/plugins/venue/class/venueconfigmanager.class.php
+!packages/web/lib/plugins/venue/class/venueconfigmappingresolver.class.php
+!packages/web/lib/plugins/venue/class/venueconfigtemplate.class.php
+!packages/web/lib/plugins/venue/class/venueconfigtemplatemanager.class.php
 *.well-known
 packages/web/fog
 packages/web/.vscode
