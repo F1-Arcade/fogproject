@@ -1,0 +1,5 @@
+#!/bin/bash
+# Wait for rpcbind
+while ! rpcinfo -p localhost >/dev/null 2>&1; do sleep 0.5; done
+/usr/sbin/exportfs -ra
+exec /usr/sbin/rpc.mountd --foreground --port 20048 --no-nfs-version 2

@@ -1,0 +1,293 @@
+#!/bin/bash
+set -e
+
+# FOG Container Initialisation Script
+# Generates all config files from environment variables
+
+# ─── Required environment variables ──────────────────────────────────────────
+: "${FOG_IP:?FOG_IP must be set}"
+: "${FOG_DB_HOST:?FOG_DB_HOST must be set}"
+: "${FOG_DB_NAME:=fog}"
+: "${FOG_DB_USER:=fogstorage}"
+: "${FOG_DB_PASS:?FOG_DB_PASS must be set}"
+: "${FOG_DB_ROOT_PASS:=}"
+: "${FOG_STORAGE_NODE:=0}"
+: "${FOG_INTERFACE:=eth0}"
+: "${FOG_WEBROOT:=fog/}"
+: "${FOG_USER:=fogproject}"
+: "${FOG_USER_PASS:=fogproject}"
+: "${FOG_STORAGE_DIR:=/images}"
+: "${FOG_HOSTNAME:=$(hostname)}"
+: "${FOG_HTTP_PROTO:=http}"
+
+PHP_VER=$(cat /etc/.php_ver)
+
+if [ "${FOG_STORAGE_NODE}" = "1" ]; then ROLE=storage-node; else ROLE=master; fi
+echo "[fog-init] Configuring FOG (role=${ROLE})..."
+
+# ─── Generate .fogsettings ───────────────────────────────────────────────────
+cat > /opt/fog/.fogsettings <<EOF
+## Start of FOG Settings
+## Created by container entrypoint
+## Version: containerised
+ipaddress='${FOG_IP}'
+interface='${FOG_INTERFACE}'
+submask='255.255.255.0'
+hostname='${FOG_HOSTNAME}'
+routeraddress=''
+plainrouter=''
+dnsaddress=''
+password='${FOG_USER_PASS}'
+osid='2'
+osname='Debian'
+dodhcp='0'
+bldhcp='0'
+dhcpd=''
+blexports='1'
+installtype='N'
+snmysqlexternal='1'
+snmysqluser='${FOG_DB_USER}'
+snmysqlpass='${FOG_DB_PASS}'
+snmysqlhost='${FOG_DB_HOST}'
+mysqldbname='${FOG_DB_NAME}'
+installlang='0'
+storageLocation='${FOG_STORAGE_DIR}'
+fogupdateloaded=1
+username='${FOG_USER}'
+docroot='/var/www/html/'
+webroot='${FOG_WEBROOT}'
+caCreated='0'
+httpproto='${FOG_HTTP_PROTO}'
+startrange=''
+endrange=''
+bootfilename='undionly.kpxe'
+packages=''
+noTftpBuild=''
+sslpath='/opt/fog/snapins/ssl/'
+backupPath='/home/'
+php_ver='${PHP_VER}'
+sslprivkey=''
+EOF
+chown fogproject:fogproject /opt/fog/.fogsettings
+chmod 600 /opt/fog/.fogsettings
+
+# ─── Generate web config.class.php ───────────────────────────────────────────
+PHP_ESC_PASS=$(echo "$FOG_DB_PASS" | sed "s/'/\\\\'/g")
+
+cat > /var/www/html/fog/lib/fog/config.class.php <<PHPEOF
+<?php
+class Config
+{
+    public function __construct()
+    {
+        global \$node;
+        self::_dbSettings();
+        self::_svcSetting();
+        if (\$node == 'schema') {
+            self::_initSetting();
+        }
+    }
+    private static function _dbSettings()
+    {
+        define('DATABASE_TYPE', 'mysql');
+        define('DATABASE_HOST', '${FOG_DB_HOST}');
+        define('DATABASE_NAME', '${FOG_DB_NAME}');
+        define('DATABASE_USERNAME', '${FOG_DB_USER}');
+        define('DATABASE_PASSWORD', '${PHP_ESC_PASS}');
+    }
+    private static function _svcSetting()
+    {
+        define('UDPSENDERPATH', '/usr/local/sbin/udp-sender');
+        define('MULTICASTINTERFACE', '${FOG_INTERFACE}');
+        define('UDPSENDER_MAXWAIT', null);
+    }
+    private static function _initSetting()
+    {
+        define('TFTP_HOST', '${FOG_IP}');
+        define('TFTP_FTP_USERNAME', '${FOG_USER}');
+        define('TFTP_FTP_PASSWORD', '${FOG_USER_PASS}');
+        define('TFTP_PXE_KERNEL_DIR', '/var/www/html/fog/service/ipxe/');
+        define('PXE_KERNEL', 'bzImage');
+        define('PXE_KERNEL_RAMDISK', 275000);
+        define('USE_SLOPPY_NAME_LOOKUPS', true);
+        define('MEMTEST_KERNEL', 'memtest.bin');
+        define('PXE_IMAGE', 'init.xz');
+        define('STORAGE_HOST', '${FOG_IP}');
+        define('STORAGE_FTP_USERNAME', '${FOG_USER}');
+        define('STORAGE_FTP_PASSWORD', '${FOG_USER_PASS}');
+        define('STORAGE_DATADIR', '${FOG_STORAGE_DIR}/');
+        define('STORAGE_DATADIR_CAPTURE', '${FOG_STORAGE_DIR}/dev/');
+        define('STORAGE_BANDWIDTHPATH', '/${FOG_WEBROOT}status/bandwidth.php');
+        define('STORAGE_INTERFACE', '${FOG_INTERFACE}');
+        define('CAPTURERESIZEPCT', 7);
+        define('WEB_HOST', '${FOG_IP}');
+        define('WOL_HOST', '${FOG_IP}');
+        define('WOL_PATH', '/${FOG_WEBROOT}wol/wol.php');
+        define('WOL_INTERFACE', '${FOG_INTERFACE}');
+        define('SNAPINDIR', '/opt/fog/snapins/');
+        define('QUEUESIZE', '10');
+        define('CHECKIN_TIMEOUT', 600);
+        define('USER_MINPASSLENGTH', 4);
+        define('NFS_ETH_MONITOR', '${FOG_INTERFACE}');
+        define('UDPCAST_INTERFACE', '${FOG_INTERFACE}');
+        define('UDPCAST_STARTINGPORT', 63100);
+        define('FOG_MULTICAST_MAX_SESSIONS', 64);
+        define('FOG_JPGRAPH_VERSION', '2.3');
+        define('FOG_REPORT_DIR', './reports/');
+        define('FOG_CAPTUREIGNOREPAGEHIBER', true);
+        define('FOG_THEME', 'default/fog.css');
+    }
+}
+PHPEOF
+chown www-data:www-data /var/www/html/fog/lib/fog/config.class.php
+
+# ─── Generate service config ─────────────────────────────────────────────────
+echo "<?php define('WEBROOT','/var/www/html/fog/');" > /opt/fog/service/etc/config.php
+chown fogproject:fogproject /opt/fog/service/etc/config.php
+
+# ─── Configure Apache global ServerName ───────────────────────────────────────
+echo "ServerName ${FOG_HOSTNAME}" > /etc/apache2/conf-available/servername.conf
+a2enconf servername > /dev/null 2>&1
+
+# ─── Configure Apache vhost ──────────────────────────────────────────────────
+cat > /etc/apache2/sites-available/001-fog.conf <<EOF
+<VirtualHost *:80>
+    ServerName ${FOG_HOSTNAME}
+    DocumentRoot /var/www/html/
+
+    <Directory /var/www/html/>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    <FilesMatch "\.php$">
+        SetHandler "proxy:unix:/run/php/php${PHP_VER}-fpm.sock|fcgi://localhost"
+    </FilesMatch>
+
+    ErrorLog /var/log/apache2/fog-error.log
+    CustomLog /var/log/apache2/fog-access.log combined
+</VirtualHost>
+EOF
+a2ensite 001-fog > /dev/null 2>&1
+
+# ─── Configure PHP-FPM pool ─────────────────────────────────────────────────
+cat > /etc/php/${PHP_VER}/fpm/pool.d/fog.conf <<EOF
+[fog]
+user = www-data
+group = www-data
+listen = /run/php/php${PHP_VER}-fpm.sock
+listen.owner = www-data
+listen.group = www-data
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 5
+pm.min_spare_servers = 5
+pm.max_spare_servers = 35
+pm.max_requests = 500
+php_admin_flag[display_errors] = Off
+php_admin_value[error_reporting] = E_ALL & ~E_NOTICE & ~E_WARNING & ~E_DEPRECATED
+php_admin_flag[log_errors] = On
+php_admin_value[error_log] = /var/log/php-fpm-fog.log
+EOF
+rm -f /etc/php/${PHP_VER}/fpm/pool.d/www.conf
+
+# ─── Configure vsftpd ────────────────────────────────────────────────────────
+cat > /etc/vsftpd.conf <<EOF
+anonymous_enable=NO
+local_enable=YES
+write_enable=YES
+local_umask=022
+dirmessage_enable=YES
+xferlog_enable=YES
+connect_from_port_20=YES
+xferlog_std_format=YES
+listen=YES
+pam_service_name=vsftpd
+userlist_enable=NO
+max_per_ip=200
+chmod_enable=YES
+seccomp_sandbox=NO
+EOF
+
+# ─── Configure TFTP ──────────────────────────────────────────────────────────
+cat > /etc/default/tftpd-hpa <<EOF
+TFTP_USERNAME="fogproject"
+TFTP_DIRECTORY="/tftpboot"
+TFTP_ADDRESS="0.0.0.0:69"
+TFTP_OPTIONS="--secure"
+EOF
+chown -R fogproject:fogproject /tftpboot
+
+# ─── Generate default.ipxe ───────────────────────────────────────────────────
+cat > /tftpboot/default.ipxe <<EOF
+#!ipxe
+cpuid --ext 29 && set arch x86_64 || set arch i386
+params
+param mac \${net0/mac}
+param arch \${arch}
+param platform \${platform}
+param product \${product}
+param manufacturer \${manufacturer}
+param ipxever \${version}
+param filename \${filename}
+isset \${net0/dhcp-server} && param dhcpserver \${net0/dhcp-server} || goto boot
+isset \${proxydhcp/dhcp-server} && param proxydhcpserver \${proxydhcp/dhcp-server} || goto boot
+:boot
+chain ${FOG_HTTP_PROTO}://${FOG_IP}/${FOG_WEBROOT}service/ipxe/boot.php##params
+EOF
+
+# ─── Configure NFS exports ───────────────────────────────────────────────────
+cat > /etc/exports <<EOF
+${FOG_STORAGE_DIR} *(ro,sync,no_wdelay,no_subtree_check,insecure_locks,no_root_squash,insecure,fsid=0)
+${FOG_STORAGE_DIR}/dev *(rw,async,no_wdelay,no_subtree_check,no_root_squash,insecure,fsid=1)
+EOF
+
+# ─── Set fogproject user password ────────────────────────────────────────────
+echo "fogproject:${FOG_USER_PASS}" | chpasswd
+
+# ─── Create storage directories ─────────────────────────────────────────────
+mkdir -p "${FOG_STORAGE_DIR}" "${FOG_STORAGE_DIR}/dev" \
+    "${FOG_STORAGE_DIR}/postdownloadscripts" "${FOG_STORAGE_DIR}/dev/postinitscripts"
+touch "${FOG_STORAGE_DIR}/.mntcheck" "${FOG_STORAGE_DIR}/dev/.mntcheck"
+chown -R fogproject:fogproject "${FOG_STORAGE_DIR}"
+
+# ─── Create redirect index ───────────────────────────────────────────────────
+if [ ! -f /var/www/html/index.php ]; then
+    echo '<?php header("Location: /fog/index.php"); die();' > /var/www/html/index.php
+    chown www-data:www-data /var/www/html/index.php
+fi
+
+# ─── Create run directories ─────────────────────────────────────────────────
+mkdir -p /run/php /run/rpcbind /run/sendsigs.omit.d /var/lib/nfs/rpc_pipefs
+
+# ─── Create FOG log files with correct ownership ────────────────────────────
+touch /var/www/html/fog/fog_login_accepted.log
+chown www-data:www-data /var/www/html/fog/fog_login_accepted.log
+
+# ─── Suppress upstream PHP warnings in CLI services ─────────────────────────
+cat > /etc/php/${PHP_VER}/cli/conf.d/99-fog-quiet.ini <<'PHPINI'
+display_errors = Off
+log_errors = On
+error_log = /var/log/fog-services.log
+PHPINI
+
+# ─── Database schema initialisation (master only) ────────────────────────────
+if [ "${FOG_STORAGE_NODE}" = "0" ] && [ -n "${FOG_DB_ROOT_PASS}" ]; then
+    echo "[fog-init] Waiting for database to be reachable..."
+    for i in $(seq 1 30); do
+        if mariadb -h "${FOG_DB_HOST}" -u root -p"${FOG_DB_ROOT_PASS}" -e "SELECT 1" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+    done
+
+    mariadb -h "${FOG_DB_HOST}" -u root -p"${FOG_DB_ROOT_PASS}" <<EOSQL
+CREATE DATABASE IF NOT EXISTS \`${FOG_DB_NAME}\`;
+GRANT ALL PRIVILEGES ON \`${FOG_DB_NAME}\`.* TO '${FOG_DB_USER}'@'%' IDENTIFIED BY '${FOG_DB_PASS}';
+FLUSH PRIVILEGES;
+EOSQL
+    # Schema install itself runs via the fog-schema-init service once Apache is up
+fi
+
+echo "[fog-init] Configuration complete."

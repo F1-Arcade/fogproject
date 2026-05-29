@@ -1,0 +1,123 @@
+#!/bin/bash
+# Auto-register this storage node with the FOG master, matching the behaviour
+# of installfog.sh's registerStorageNode() function.
+#
+# Uses the master's /maintenance/create_update_node.php HTTP endpoint so all
+# FOG business logic and validation runs as it would in a normal install.
+
+MARKER=/var/lib/fog/.node-registered
+
+# Master is registered by the schema installer (DefaultMember) — nothing to do.
+if [ "${FOG_STORAGE_NODE}" != "1" ]; then
+    exec sleep infinity
+fi
+
+mkdir -p "$(dirname "$MARKER")"
+
+# Master HTTP endpoint (defaults to compose service name).
+MASTER_HOST="${FOG_MASTER_HOST:-fog-master}"
+MASTER_PROTO="${FOG_HTTP_PROTO:-http}"
+WEBROOT="/${FOG_WEBROOT:-fog/}"
+BASE_URL="${MASTER_PROTO}://${MASTER_HOST}${WEBROOT}"
+
+NODE_IP="${FOG_IP}"
+NODE_NAME="${FOG_NODE_NAME:-${NODE_IP}}"
+NODE_USER="${FOG_USER:-fogproject}"
+NODE_PASS="${FOG_USER_PASS:-fogproject}"
+NODE_IFACE="${FOG_INTERFACE:-eth0}"
+STORAGE_DIR="${FOG_STORAGE_DIR:-/images}"
+SNAPIN_DIR="${FOG_SNAPIN_DIR:-/opt/fog/snapins}"
+SSL_PATH="${FOG_SNAPIN_DIR:-/opt/fog/snapins}/ssl"
+MAX_CLIENTS="${FOG_MAX_CLIENTS:-10}"
+BANDWIDTH="${FOG_BANDWIDTH_LIMIT:-0}"
+GRAPH_ENABLED="${FOG_GRAPH_ENABLED:-1}"
+
+# Build a fingerprint of all registration-relevant config.
+CONFIG_HASH=$(printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+    "$NODE_NAME" "$NODE_IP" "$NODE_USER" "$NODE_PASS" "$NODE_IFACE" \
+    "$STORAGE_DIR" "$SNAPIN_DIR" "$SSL_PATH" "$MAX_CLIENTS" "$BANDWIDTH" "$GRAPH_ENABLED" "$WEBROOT" \
+    | md5sum | awk '{print $1}')
+
+# If config hasn't changed since last registration, nothing to do.
+if [ -f "$MARKER" ] && [ "$(cat "$MARKER")" = "$CONFIG_HASH" ]; then
+    exec sleep infinity
+fi
+
+# Wait for the master web UI to be ready.
+for _ in $(seq 1 120); do
+    if curl -fsSk -o /dev/null "${BASE_URL}management/index.php" 2>/dev/null; then
+        break
+    fi
+    sleep 5
+done
+
+b64() { printf '%s' "$1" | base64; }
+
+# Check if this node is already registered.
+EXISTS=$(curl -sk -X POST --data-urlencode "ip=${NODE_IP}" \
+    "${BASE_URL}maintenance/check_node_exists.php" 2>/dev/null || true)
+
+if [ "$EXISTS" = "exists" ]; then
+    # Node exists but config changed — update via master HTTP API.
+    RESULT=$(curl -sk -X POST \
+        -d "ip=$(b64 "${NODE_IP}")" \
+        -d "name=$(b64 "${NODE_NAME}")" \
+        -d "path=$(b64 "${STORAGE_DIR}")" \
+        -d "ftppath=$(b64 "${STORAGE_DIR}")" \
+        -d "snapinpath=$(b64 "${SNAPIN_DIR}")" \
+        -d "sslpath=$(b64 "${SSL_PATH}")" \
+        -d "maxClients=$(b64 "${MAX_CLIENTS}")" \
+        -d "user=$(b64 "${NODE_USER}")" \
+        --data-urlencode "pass=$(b64 "${NODE_PASS}")" \
+        -d "interface=$(b64 "${NODE_IFACE}")" \
+        -d "bandwidth=$(b64 "${BANDWIDTH}")" \
+        -d "webroot=$(b64 "${WEBROOT}")" \
+        -d "isGraphEnabled=$(b64 "${GRAPH_ENABLED}")" \
+        -d "fogverified" \
+        "${BASE_URL}maintenance/update_node.php" 2>/dev/null || true)
+    if [ "$RESULT" = "updated" ]; then
+        echo "[fog-node-register] Updated storage node '${NODE_NAME}' (${NODE_IP}) — config changed"
+        echo -n "$CONFIG_HASH" > "$MARKER"
+    else
+        echo "[fog-node-register] Update failed (response: ${RESULT}) — will retry on next start"
+    fi
+    exec sleep infinity
+fi
+
+# Submit registration via the same endpoint installfog.sh uses.
+curl -sk -X POST \
+    -d "newNode" \
+    -d "name=$(b64 "${NODE_NAME}")" \
+    -d "path=$(b64 "${STORAGE_DIR}")" \
+    -d "ftppath=$(b64 "${STORAGE_DIR}")" \
+    -d "snapinpath=$(b64 "${SNAPIN_DIR}")" \
+    -d "sslpath=$(b64 "${SSL_PATH}")" \
+    -d "ip=$(b64 "${NODE_IP}")" \
+    -d "maxClients=$(b64 "${MAX_CLIENTS}")" \
+    -d "user=$(b64 "${NODE_USER}")" \
+    --data-urlencode "pass=$(b64 "${NODE_PASS}")" \
+    -d "interface=$(b64 "${NODE_IFACE}")" \
+    -d "bandwidth=$(b64 "${BANDWIDTH}")" \
+    -d "webroot=$(b64 "${WEBROOT}")" \
+    -d "fogverified" \
+    "${BASE_URL}maintenance/create_update_node.php" >/dev/null 2>&1
+
+# Confirm.
+VERIFY=$(curl -sk -X POST --data-urlencode "ip=${NODE_IP}" \
+    "${BASE_URL}maintenance/check_node_exists.php" 2>/dev/null || true)
+
+if [ "$VERIFY" = "exists" ]; then
+    # create_update_node.php doesn't set isGraphEnabled; call update_node.php
+    # to apply any fields the upstream create endpoint ignores.
+    curl -sk -X POST \
+        -d "ip=$(b64 "${NODE_IP}")" \
+        -d "isGraphEnabled=$(b64 "${GRAPH_ENABLED}")" \
+        -d "fogverified" \
+        "${BASE_URL}maintenance/update_node.php" >/dev/null 2>&1 || true
+    echo -n "$CONFIG_HASH" > "$MARKER"
+    echo "[fog-node-register] Storage node '${NODE_NAME}' (${NODE_IP}) registered via master HTTP API"
+else
+    echo "[fog-node-register] Registration of '${NODE_NAME}' could not be confirmed — will retry on next container start"
+fi
+
+exec sleep infinity

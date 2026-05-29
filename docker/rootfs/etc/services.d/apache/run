@@ -1,0 +1,5 @@
+#!/bin/bash
+# Wait for PHP-FPM socket
+PHP_VER=$(cat /etc/.php_ver)
+while [ ! -S /run/php/php${PHP_VER}-fpm.sock ]; do sleep 0.5; done
+exec /usr/sbin/apache2ctl -DFOREGROUND

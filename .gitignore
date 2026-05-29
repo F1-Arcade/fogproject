@@ -89,4 +89,7 @@ packages/web/lib/plugins/hostext
 *.cache*
 *.idea*
 
+# Docker environment (contains credentials)
+.env
+
 **/*/.claude

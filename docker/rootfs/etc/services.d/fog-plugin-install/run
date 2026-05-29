@@ -1,0 +1,83 @@
+#!/bin/bash
+# Installs and activates FOG plugins listed in FOG_PLUGINS (comma-separated).
+# Runs once after the schema is installed; subsequent invocations re-check
+# in case FOG_PLUGINS has changed.
+
+MARKER=/var/lib/fog/.plugins-installed
+SCHEMA_MARKER=/var/lib/fog/.schema-installed
+
+# Storage nodes do not manage plugins.
+if [ "${FOG_STORAGE_NODE}" = "1" ]; then
+    exec sleep infinity
+fi
+
+PLUGINS="${FOG_PLUGINS:-subnetgroup,location}"
+
+# Nothing to do if the list is empty.
+if [ -z "$PLUGINS" ]; then
+    exec sleep infinity
+fi
+
+mkdir -p "$(dirname "$MARKER")"
+
+# Re-run only when the requested plugin set changes.
+CURRENT_HASH=$(printf '%s' "$PLUGINS" | md5sum | awk '{print $1}')
+if [ -f "$MARKER" ] && [ "$(cat "$MARKER" 2>/dev/null)" = "$CURRENT_HASH" ]; then
+    exec sleep infinity
+fi
+
+# Wait for the schema installer to finish before touching plugin tables.
+for i in $(seq 1 60); do
+    [ -f "$SCHEMA_MARKER" ] && break
+    sleep 2
+done
+
+if [ ! -f "$SCHEMA_MARKER" ]; then
+    echo "[fog-plugin-install] Schema not ready — skipping plugin install"
+    exec sleep infinity
+fi
+
+# Wait for the install_plugin.php endpoint to respond.
+for i in $(seq 1 30); do
+    if curl -fsS -o /dev/null "http://localhost/fog/maintenance/install_plugin.php" 2>/dev/null; then
+        break
+    fi
+    sleep 2
+done
+
+b64() { printf '%s' "$1" | base64; }
+
+FAILED=0
+IFS=',' read -ra PLUGIN_LIST <<< "$PLUGINS"
+for plugin in "${PLUGIN_LIST[@]}"; do
+    plugin=$(printf '%s' "$plugin" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [ -z "$plugin" ] && continue
+
+    RESULT=$(curl -sk -X POST \
+        -d "plugin=$(b64 "${plugin}")" \
+        -d "fogverified" \
+        "http://localhost/fog/maintenance/install_plugin.php" 2>/dev/null || true)
+
+    case "$RESULT" in
+        installed)
+            echo "[fog-plugin-install] Installed and activated plugin: ${plugin}"
+            ;;
+        activated)
+            echo "[fog-plugin-install] Activated plugin: ${plugin}"
+            ;;
+        unknown_plugin)
+            echo "[fog-plugin-install] Unknown plugin '${plugin}' — no such directory"
+            FAILED=1
+            ;;
+        *)
+            echo "[fog-plugin-install] Failed to install plugin '${plugin}' (response: ${RESULT})"
+            FAILED=1
+            ;;
+    esac
+done
+
+if [ "$FAILED" = "0" ]; then
+    echo -n "$CURRENT_HASH" > "$MARKER"
+fi
+
+exec sleep infinity
